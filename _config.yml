@@ -11,7 +11,7 @@ excerpt_separator: "<!--more-->"
 
 
 # SNS settings
-RSS: true
+RSS: false
 #weibo_username:     huxpro
 #zhihu_username:     huxpro
 github_username:    jwlyn
