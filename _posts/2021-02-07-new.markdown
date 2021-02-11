@@ -1,0 +1,405 @@
+---
+layout: post
+title:  "Open Domain Chatbot Recent Updates"
+date:   2021-02-07 07:48:13 +0000
+categories: chatbot 
+---
+
+This article introduces the latest developments in Open Domain chatbots.
+
+<!--more-->
+
+**Table Of Content**
+* TOC
+{:toc}
+
+## Background introduction
+
+With the successful application of pre-trained models on large-scale unsupervised corpus such as BERT and XLNet on many NLU tasks, more and more of these models have begun to be used on NLG tasks, including machine translation, summarization and grammatical error correction, etc. . The research of open domain chatbots has gradually developed from the sub-module PipeLine system to the end to end direction. In order to better train the e2e model, large-scale chat corpora such as [Reddit collected by pushshift.io](https://files.pushshift.io/reddit/) have also begun to appear, and ConvAI2 [EmpatheticDialogues](https://github.com/facebookresearch/EmpatheticDialogues) data set and [Blended Skill Talk](https://parl.ai/projects/bst/) corpus that integrates the above three features.
+
+The emergence of these large-scale and specific public corpora has also greatly promoted the rapid development of open domain chatbots. This article will analyze several representative papers and open source code, because most of these papers use Transformer models and pre-training methods such as Bert/XLNet, so unfamiliar readers can read [BERT Course](/2019/03/05/) bert-prerequisites/), [XLNet principle](/2019/06/30/xlnet-theory/) and other articles to learn related basic knowledge.
+
+## [DialoGPT](https://github.com/microsoft/DialoGPT)
+
+### Introduction
+
+DialoGPT's paper can be downloaded from [here](https://arxiv.org/abs/1911.00536). 
+
+Dialogue System is different from tasks such as machine translation and summarization. It is considered a one to many task, that is, there are many reasonable responses under a context, and the robot is in the whole conversation process Be consistent and avoid meaningless panacea answers (such as "ok"). From the perspective of a complete e2e solution, the model needs to be more complex and able to consider more context information (to solve the consistency problem), and for the non-informative response, this article uses Mutual Information Maximization (MMI) to choose more specific Reply.
+
+### Corpus
+
+The data is captured from reddit reviews from 2005 to 2017. A reddit post can be seen as a tree, and a reply to a comment can be seen as its child nodes. Then a path from the root node to the leaf node is a conversation, so one post corresponds to multiple conversations. In addition, the author filters the data as follows:
+
+* Contains url
+* More than 3 repeated words in respone
+* Top50 high-frequency words do not contain any
+* Contains special symbols (such as [])
+* Source plus target more than 200 words
+* Target contains sensitive content
+
+After approval, the final data contains 147,116,725 conversations, with a total of 1.8 billion Tokens.
+
+### Model
+
+The model structure basically refers to the Transformer model of GPT2, splicing the Tokens of the entire dialogue together to obtain a sequence $x_1, ..., x_N$. The dialogue history is recorded as $S = x_1, ...,x_m$, and the target sequence $T=x_{m+1},...,x_N$. Then the conditional probability $P(T \vert S)$ can be written as:
+
+$$
+P(T|S)=\prod_{n=m+1}^Np(x_n|x_1,...,x_{n-1})
+$$
+
+For multiple rounds of dialogue $T_1,...,T_K$, we can split into K pairs of S and T.
+
+### MMI
+
+Robots can easily generate bland and uninformative responses. This article implements a Maximum Mutual Information (MMI) scoring function. MMI will train a reverse probability model $P(Source \vert Target)$. We first use the Top-K sampling algorithm to generate K candidate Hypothesis using the model, and then use the MMI function $P(Source \vert Hypothesis)$ to select the Hypothesis with the highest score. Intuitively speaking, MMI will punish those replies without information, because these replies will appear under many Context (Source), so many Source's $P(Source \vert Hypothesis)$ have a high probability, so each $P(Source \vert Hypothesis)$ is very small.
+
+#### Experimental details
+
+This article has trained 3 models, the parameters are 117M, 345M and 762M respectively, the model parameter configuration is as follows:
+
+<a name='img1'>![](/img/chatbot2/1.png)</a>
+*Picture: DialoGPT parameters*
+ 
+The size of the model dictionary is 50,257, and 16 Nvidia v100 GPUs are used for training with NVLink. Using Noam learning rate scheduler, there are 16000 warm-up steps. The learning rate is selected based on the loss of the validation set. Stop training when the loss on the validation set does not decrease. For small and medium-sized models, 5 Epochs were trained, and 3 Epochs for large models.
+
+#### DSTC-7 dialogue generation task
+
+[DSTC-7](http://workshop.colips.org/dstc7/) is an end-to-end dialogue generation task. Its purpose is to generate dialogues other than chitchat, and it will provide external knowledge. But this task is different from the traditional Task-oriented/Goal-oriented task. It does not have a clear goal (such as booking air tickets). Its dialogue is not particularly clear goals, such as a brainstorming dialogue.
+
+The test data of DSTC-7 comes from reddit, and the posts with more than 6 replies were selected. The baseline system for comparison is PERSONALITY CHAT, which is a seq2seq model trained with Twitter data and used in Microsoft Azure's Cognitive Service. The evaluation uses automatic indicators including BLEU, METEOR and NIST. In addition, Entropy and DIST-n are also used to judge the diversity of vocabulary. The results on DSTC-7 are as follows:
+
+<a name='img2'>![](/img/chatbot2/2.png)</a>
+*Figure: Test results of DSTC-7 data set*
+
+Among them, Team B is the champion of DSTC-7, and Human represents the reserved reference answer (a context has multiple reasonable responses). Note: The model surpasses humans in indicators such as NIST and BLEU (refer to the answer), which does not mean that the results of the model are better than humans. Because similar to machine translation, there is no standard and the only correct answer to the dialogue system. These automatic evaluation indicators only calculate the literal overlap degree. Generally, the higher the task overlap degree, the better the model, but it is not good to not see the answer that is not the same as the reference answer.
+
+#### Reddit Test Set
+
+On this test set, we compared the model trained on Reddit from scratch and the model pre-trained with OpenAI GPT2 and then trained on Reddit:
+
+
+<a name='img3'>![](/img/chatbot2/3.png)</a>
+*Figure: Results of the Reddit data set*
+
+It can be seen that the model training based on GPT2 will be better, and the improvement is more obvious for small models.
+
+In addition, the model DIALOGPT (345M, MMI), which is sampled by Top-K and then sorted by MMI, has an improvement in NIST and METEOR than the baseline DIALOGPT (345M), but it has a slight decline on BLEU.
+
+### Code
+
+The code can be downloaded from [here](https://github.com/microsoft/DialoGPT), and the Hugging Face model is also provided here (but there is no reverse MMI).
+
+If you want to test, you can download [large](https://huggingface.co/microsoft/DialoGPT-large), [medium](https://huggingface.co/microsoft/DialoGPT-medium) and [small]( https://huggingface.co/microsoft/DialoGPT-small) Three versions of the trained model. After entering these pages, click **List all files in model ** to download all files. If you don't download it in advance, you can also download it automatically by the model name.
+
+The test code is as follows:
+
+```
+from transformers import AutoModelWithLMHead, AutoTokenizer
+import torch
+path="/home/lili/data/huggface/DialoGPT-large"
+tokenizer = AutoTokenizer.from_pretrained(path)
+model = AutoModelWithLMHead.from_pretrained(path)
+
+for step in range(10):
+    # encode the new user input, add the eos_token and return a tensor in Pytorch
+    new_user_input_ids = tokenizer.encode(input(">> User:") + tokenizer.eos_token, return_tensors='pt')
+
+    # append the new user input tokens to the chat history
+    #bot_input_ids = torch.cat([chat_history_ids, new_user_input_ids], dim=-1) if step> 0 else new_user_input_ids
+    bot_input_ids = new_user_input_ids
+    # generated a response while limiting the total chat history to 1000 tokens,
+    chat_history_ids = model.generate(bot_input_ids, max_length=1000, pad_token_id=tokenizer.eos_token_id)
+ 
+    # pretty print last ouput tokens from bot
+    print("DialoGPT: {}".format(tokenizer.decode(chat_history_ids[:, bot_input_ids.shape[-1]:][0], skip_special_tokens=True)))
+```
+
+The test results are as follows:
+```
+>> User:hello
+DialoGPT: Hiya
+>> User:what's your favorite sports?
+DialoGPT: I like baseball and football.
+>> User:I like basketball.
+DialoGPT: I like basketball.
+```
+
+There is no MMI here, and it seems that the effect is average.
+
+## [Meena](https://github.com/google-research/google-research/tree/master/meena/)
+
+Meena's paper can be downloaded from [here](https://arxiv.org/abs/2001.09977). This article does not have much feature in the model structure. It is to train an end-to-end system on a large number of social media data sets. Of course, the parameters of 2.6B are much larger than DialoGPT. However, for the problem that it is difficult to automatically evaluate the open field dialogue system, this paper proposes a manual evaluation index of SSA. And the experiment also found that SSA and language model perplexity (PPL) are strongly correlated. If this conclusion is true, we can simply use the language model's PPL to automatically evaluate it.
+
+### Introduction
+
+Open domain chatbots have always been a problem that everyone wants to solve, but unlike Closed Domain Chatbots, which have a predefined problem domain, open domain chatbots can chat on any topic. [MILABOT](https://github.com/YBIGTA/DeepNLP-Study/wiki/MILABOT-:-A-Deep-Reinforcement-Learning-Chatbot), [Mitsuku](https://www.pandorabots.com/mitsuku /), [Xiaobing](https://www.msxiaobing.com/) and [Cleverbot](https://www.cleverbot.com/) and other robots have very complex frameworks that require the use of knowledge-based, A variety of methods such as retrieval and rules are implemented. Although the End-to-end method is simple, it still has a major shortcoming: it often answers the wrong questions or answers some vague answers.
+
+
+This article uses a 40B data set to train an end-to-end model. This is an [Evolved Transformer](https://arxiv.org/abs/1901.11117) model. The Evolved Transformer is through Neural Architecture Search (NAS) Method to automatically search for a suitable network structure. Search for the best model with 2.6B parameters, and the PPL on the test set is 10.2.
+
+In order to evaluate the effect of Meena, this paper also proposes a simple human evaluation index Sensibleness and Specificity Average (SSA). Sensibleness requires that the robot's reply is reasonable and logical; while Specificity requires that the reply be specific and informative, in order to avoid "I don't know" such a panacea and meaningless reply. The final Average is to average these two indicators.
+
+### Experiment
+One of the experiments is static evaluation, that is, 1,477 conversations are manually labeled, and these conversations are all 1 to 3 rounds. Then process 315 single-round contexts, 500 two-round contexts and 662 three-round contexts, and let the model output a response (if it is an evaluator, use the response of the original dialogue). These (context, response) pairs are handed over to the evaluator to determine whether it is Sensibleness and Specificity, so that SSA can be obtained on average.
+
+First of all, we need to judge whether the SSA indicator itself is reasonable. In order to judge this, the author of the article implements different SSA robots, and then let people judge whether the dialogue of these robots is human-like. The result is as follows:
+
+<a name='img5'>![](/img/chatbot2/5.png)</a>
+*Figure: Relationship between SSA and Human-like*
+
+The point in the upper right corner is human performance, and the other points are robots. It can be calculated that the correlation coefficient between Human-like and SSA is 0.96, indicating that it is reasonable for us to use SSA to evaluate robots.
+
+Next, in order to evaluate the relationship between SSA and PPL, this article trained many different PPL models (from 10 to 18), and obtained the following results:
+
+<a name='img4'>![](/img/chatbot2/4.png)</a>
+*Figure: Static evaluation of the relationship between SSA and PPL*
+
+It can be seen that the lower the PPL, the higher the SSA, and their correlation coefficient is 0.94. In addition, the two indicators of Sensibleness and Specificity after SSA disassembly are also strongly correlated with PPL, and the correlation coefficients are 0.93 and 0.94, respectively.
+
+In addition, systems such as Xiaobing have no code and API, so they cannot do static experiments and cannot give it a fixed context. So directly chat with it for evaluation, the results of the interactive evaluation are as follows:
+
+<a name='img6'>![](/img/chatbot2/6.png)</a>
+*Figure: The relationship between dynamic Sensibleness and PPL*
+
+<a name='img7'>![](/img/chatbot2/7.png)</a>
+*Figure: The relationship between dynamic Specificity and PPL*
+
+The conclusion is similar, the two indicators of SSA are strongly correlated with PPL.
+
+
+In addition, the above two experiments can also be seen: Meena's Sensibleness in the dynamic experiment is 87%, which is better than Xiaobing's 45% and DialoGPT's 57%; the dynamic Specificity results are similar.
+
+### Code
+
+Meena did not give the source code and API
+
+
+## [ParlAI](https://parl.ai/)
+
+ParlAI is a dialog research software platform 
+
+
+### Introduction
+
+On the one hand, the dialogue system can be regarded as a single task, that is, chatting with people. But on the other hand, it can be broken down into a variety of sub-tasks, such as question and answer, task-based dialogue, and small chat. And as far as each seed task is concerned, it can also be divided into many areas. For example, task-based dialogues can be booking tickets and checking the weather. Questions and answers can be based on wiki facts, or based on a knowledge base. Due to so many tasks, it is more difficult to objectively evaluate a model, because many models just overfit a certain data set, but changing a task does not have that good effect. In order to make research easier, it is very important for everyone to have a unified dialogue research and testing platform. This is the goal of ParlAI.
+
+### Objective
+
+ParlAI includes the following goals:
+* Develop a unified framework for dialogue models
+* ParlAI hopes to unify the input format of different dialogue tasks, and try to unify the evaluation framework and indicators. In this way, researchers can submit their own model code, which can better reproduce their research results.
+* Contains versatile dialogues with multiple skills
+* ParlAI seamlessly integrates a variety of simulated and real data sets, and advocates multi-task training, so as to avoid the model from overfitting a certain data set.
+* Chat with real people
+* Realize algorithm chat with real people through docking Amazon Mechanical Turk.
+
+### Traits
+
+ParlAI includes many dialogue tasks and agents. These tasks can be static supervised learning tasks or dynamic reinforcement learning tasks. In addition to text, multimedia input such as pictures is also supported.
+
+### Basic ideas
+
+#### World
+
+That is, the environment can be a simple conversation between two agents or a complex conversation scenario between multiple agents.
+
+#### Agent
+
+Agent can change the environment, it can be a learner (machine learning model) or a human.
+
+#### Teacher
+
+An agent for teaching learners. The data set including supervised learning is also a kind of Agent (Teacher).
+
+#### Action and Observation
+
+ParlAI regards a task as a reinforcement learning task, even a task like QA, except that one of its Episodes has only one round of interaction. For example, the following code:
+
+<a name='img8'>![](/img/chatbot2/8.png)</a>
+*Figure: The main function of ParlAI*
+
+Every round calls world.parley(), and parley is actually very simple. It traverses all agents. Each agent calls the act function to generate a message (act), and then sends this message to other agents, calling Their observe(act) function.
+
+ParlAI's message is actually a Python dict, which predefines some common keys, such as text representing the text of the conversation, which is almost always present in any message. In addition, for supervised learning, there will be labels, the following figure is a common Key:
+
+<a name='img9'>![](/img/chatbot2/9.png)</a>
+
+For example, the QA task of bAbI will have two Agents, a Teacher and a Student. Teacher will ask questions. The question of this task is a multiple-choice question, so there will be label_candidates. In addition, the teacher will also give reference answers, which are labels. In addition, some questions are contextual, so continuous related questions will be organized into an Episode. For example, the following example:
+
+```
+Teacher: {
+    'text': 'Sam went to the kitchen\nPat gave Sam the milk\nWhere is the milk?',
+    'labels': ['kitchen'],
+    'label_candidates': ['hallway', 'kitchen', 'bathroom'],
+    'episode_done': False  # indicates next example will be related to this one
+}
+Student: {
+    'text': 'hallway'
+}
+Teacher: {
+    'text': 'Sam went to the hallway\nPat went to the bathroom\nWhere is the milk?',
+    'labels': ['hallway'],
+    'label_candidates': ['hallway', 'kitchen', 'bathroom'],
+    'episode_done': True
+}
+Student: {
+    'text': 'hallway'
+}
+```
+
+Teacher first said "Sam went to the kitchen" and "Pat gave Sam the milk", and then asked "Where is the milk?". Then the candidate answers are'hallway','kitchen','bathroom'. Then the labels tell the Student that the correct answer is'hallway'. If episode_done is False, the following question is related to this question.
+
+Student's answer is'hallway', which is wrong. Then the Teacher asked a question. This time episode_done is True, which means that the Episode is over.
+
+In ParlAI, the training process is also a dialogue process. For supervised learning, Teacher's Act is to give questions (text) and answers (labels). And Student's Act may use this data for training and update model parameters. Teacher will also count the training accuracy and other indicators based on the text given by the Student.
+
+#### Code
+
+```
+git clone https://github.com/facebookresearch/ParlAI.git ~/ParlAI
+```
+
+```
+cd ~/ParlAI; python setup.py develop
+```
+
+## [BlenderBot](https://parl.ai/projects/recipes/)
+[Recipes for building an open-domain chatbot](https://arxiv.org/abs/2004.13637)。
+
+
+## [PLATO-2](https://github.com/PaddlePaddle/Knover/tree/master/plato-2)
+
+### Introduction
+
+With the great success of large-scale corpus pre-training models such as BERT on NLU tasks, many works have also tried to apply it to NLG tasks. For example, the DialoGPT model introduced above has tens of millions of parameters, and a Transformer model trained on Reddit's corpus. The Meena model has 2.6 billion parameters, and the quality of the response has also improved a lot. In order for the robot to express knowledge, compassion and consistent personality, Blender used a corpus that was manually annotated to reflect these characteristics for fine-tuning.
+
+The last version of PLATO-2, PLATO, was mainly to solve the one-to-many problem of dialogue. Because it is different from tasks such as translation, there can be multiple reasonable responses in the same dialog context (Dialog Context). The same input may have multiple completely different outputs, which may make the model at a loss. PLATO tries to solve this problem through thematic hidden variables and has achieved good results.
+
+### Method
+
+#### Model
+
+The Transformer model used by PLATO-2. The core components of Transformer are layer normalization, multi-head Attention and fully connected layer. Readers who are not familiar with it can refer to [Transformer illustration](/2019/03/09/transformer-illustrated/ ). The connection method of these three components in the original BERT paper is: layer normalization is between the residual connections, that is, the output of the attention/full connection plus the input (residual) and then layer normalization. Another way is to do layer normalization first, then Attention/full connection, and then residual connection. According to experience, the latter method is better for large models. This article uses the latter method. The model structure is shown in the figure below:
+
+<a name='img10'>![](/img/chatbot2/10.png)</a>
+*Figure: PLATO-2 model structure*
+
+#### Curriculum Learning
+
+PLATO-2 is divided into two stages of learning: first is a coarse-grained ordinary training, which learns one-to-one response; then is fine-grained training, By introducing topic hidden vectors, we learn how to respond differently under different topics.
+
+<a name='img11'>![](/img/chatbot2/11.png)</a>
+*Figure: Curriculum learning process*
+
+##### Coarse-grained model
+
+The coarse-grained model is the standard seq2seq model. Assuming that the input is Context c and the output is Response r, the optimization objective function of the coarse-grained model is:
+
+$$
+\begin{split}
+\mathcal{L}_{NLL}^{Baseline} & = - \mathbb{E} \log p(r|c) \\
+& = - \mathbb{E} \sum_{t=1}^T \log p(r_t|c,r_{<t})
+\end{split}
+$$
+
+Where T is the length of the response r, and $r_{<t}$ represents the word generated before time t (excluding t). Because this is a one-way model, the self-attention of the decoder at a certain moment can only be the word before the address, which is represented by the orange line in the figure below. Note: In fact, there is no strict distinction between Encoder and Decoder here, they are all mixed together, but the context can attend all the words contained in the context, and the response at the time t can attend to the words before the time t and all the contexts.
+
+<a name='img12'>![](/img/chatbot2/12.png)</a>
+*Figure: Coarse-grained training*
+
+#####  Fine-grained generative model
+
+In order to solve the one-to-many problem, the PLATO system introduces a discrete topic hidden vector z. Its meaning is: a context c may correspond to multiple reasonable response r, but the probability is different under different topics z. If we know the topic of the reply, we can adjust more suitable parameters for a topic instead of mixing all the replies together, so that the model can be easily confused.
+
+But now comes the question: how do we know the subject of a reply? Of course, it cannot be marked manually. This can learn from the idea of EM's algorithm here: if we know the topic, we can better adjust the model parameters to predict the probability $P(r \vert c,z)$; but how do we know the topic of a reply? We can also use a model $P(z\vert r,c)$ to predict. By decomposing $P(r\vert c)$ into two probabilities $P(z \vert r,c)$ and $P(r \vert c,z)$, we can add independence to the model structure Assumptions, thereby reducing impossible assumptions with prior knowledge.
+
+So the new loss function becomes:
+
+$$
+\begin{split}
+\mathcal{L}_{NLL}^{Generation} &= -\mathbb{E}_{z \sim p(z\vert r,c)} \log p(r \vert c,z) \\
+&=-\mathbb{E}_{z \sim p(z\vert r,c)} \sum_{t=1}^T \log p(r_t|c,z,r_{<t})
+\end{split}
+$$
+
+The complete model is shown below:
+
+<a name='img14'>![](/img/chatbot2/14.png)</a>
+*Figure: Fine-grained generative model*
+
+The above picture is divided into four parts. First, let's look at the $p(r \vert c,z)$ model in the upper left corner, which is the known topic z (vector) and context c, and predict response r. z and c can fully attend each other, it is the input of the model, and r is autoregressive, it can attend to all z and c, but $r_t$ can only attend to $r_{<t}$.
+
+Next, look at the lower left, which is $p(z \vert r,c)$. The z entered at this time is the special symbol \[M\], and the attention can see all other symbols at this time.
+
+Next is the lower right, through the sampling of the lower left model, get a z vector, and then use the upper left model to predict $h_z$ and other T response $h_1,..,h_T$ to calculate $$\mathcal{L} _{NLL}^{Generation}$$ and $$\mathcal{L}_{BOW}^{Generation}$$.
+
+##### Response Coherence
+
+The current popular generation strategy is: first use a generative model to generate multiple possible responses, and then use a function to sort these responses and choose the best one. There are many functions for sorting, such as the MMI used by DialoGPT, which is $p(c \vert r)$. PLATO-2 uses a two-class model $P(l_r \vert r,c)$. The input is context c and candidate response r. This model outputs the probability that c and r are consistent (coherence). During training, the positive sample ($l_r=1$) comes from c and r in the training data, while the negative sample can find c in another context $r-$. The loss function of this model is:
+
+$$
+\begin{split}
+\mathcal{L}_{RCE}^{Evaluation} &= − \log p(l_r = 1 \vert c, r) \\
+& − \log p(l_{r-} = 0 \vert c, r-)
+\end{split}
+$$
+
+In addition, for better learning, the task (loss) of MLM (Mask Language Model) is added to the Evalution model:
+
+$$
+\mathcal{L}_{MLM}^{Evaluation}=- \mathbb{E} \sum_{m \in M} \log p(x_m \vert x_{\M})
+$$
+
+
+$$
+\mathcal{L}^{Evaluation}=\mathcal{L}_{RCE}^{Evaluation}+\mathcal{L}_{MLM}^{Evaluation}
+$$
+
+
+### Code
+
+https://github.com/PaddlePaddle/Knover/tree/master/plato-2
+
+```
+- python >= 3.7.0
+- paddlepaddle-gpu >= 1.8.1
+- numpy
+- sentencepiece
+- termcolor
+
+- CUDA == 10.1 (recommend)
+- CUDNN == 7.6 (recommend)
+- NCCL
+```
+
+
+```
+git clone https://github.com/PaddlePaddle/Knover.git
+cd Knover
+```
+
+Pretrained Models
+https://baidu-nlp.bj.bcebos.com/PLATO-2/24L.tar
+https://baidu-nlp.bj.bcebos.com/PLATO-2/32L.tar
+
+```
+$ sh plato-2/scripts/24L_plato_interact.sh
+...
+....
+
+Load pretraining parameters from ./24L/Plato.
+Enter [EXIT] to quit the interaction, [NEXT] to start a new conversation.
+[Human]: hi
+[Bot]: hi !
+[Human]: what's your favoriate sports?
+[Bot]: i don't watch sports at all haha .
+[Human]: do you like pop music?
+[Bot]: i do like pop music
+[Human]: which singer do you like
+[Bot]: my favorite is kesha but im really into some pop artists as well .
+[Human]: which song do you like 
+[Bot]: i like alot of different types of music , but right now im into like kesha's " I'm not here " and some other songs by the same artist
+[Human]: 
+
+```
