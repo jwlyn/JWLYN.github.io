@@ -1,3 +1,12 @@
+---
+layout: post
+title:  "Counselling Chat Analysis"
+date:   2021-02-11 07:48:13 +0000
+categories: chatbot
+tags: sentimental-analysis
+mathjax: true
+---
+
 <a name='img1'>![](/img/ana1.jpg)</a>
 <a name='img2'>![](/img/ana2.jpg)</a>
 <a name='img3'>![](/img/ana3.jpg)</a>
